@@ -69,7 +69,7 @@ class Net (nn.Module):
         self.len_after_conv = 400
         self.hamming_window = torch.from_numpy(scipy.signal.hamming(self.win_length)).float().cuda()
 
-        # Learnable Mean parameter (for 1-D Gaussian kernels)
+        # Learnable Mean parameter (for 1-D Gaussian kernels in Acoustic FB layer)
         self.means = torch.nn.Parameter((torch.rand(self.ngf)*(-5) + 1.3).float().cuda()) # \mu
         t = range(-self.filt_h/2, self.filt_h/2)
         self.temp = torch.from_numpy((np.reshape(t, [self.filt_h, ]))).float().cuda() + 1
@@ -80,10 +80,30 @@ class Net (nn.Module):
         self.relevance_filter_wts_acousticFB = Relevance_weights_acousticFB()
         self.relevance_filter_wts_modFB = Relevance_weights_modFB()
 
-        # Modulation filtering parameters
+        # Modulation filtering parameters (for 2-D Gaussian kernels)
         self.num_mod_filt = 40
+        self.filt_h_mod = 5 # rate-scale filter height (along rate)
+        self.filt_w_mod = 5 # rate-scale filter width (along scale)
 
-        self.conv1 = nn.Conv2d(1, self.num_mod_filt, kernel_size=(5,5), padding=(1,1))
+        self.padding_h_mod = int(np.floor(self.filt_h_mod/2)) - 1
+        self.padding_w_mod = int(np.floor(self.filt_w_mod/2)) - 1
+
+        self.t_fs = 100 # max. sampling across rate
+        self.f_fs = 24  # max. sampling across scale
+  
+        self.t_sigma = (torch.from_numpy(numpy.asarray(numpy.ones(self.num_mod_filt)*1.25)).float().cuda())
+        self.f_sigma = (torch.from_numpy(numpy.asarray(numpy.ones(self.num_mod_filt)*1.25)).float().cuda())
+
+        [X, Y] = (numpy.meshgrid(range(-self.filt_h_mod/2, self.filt_h_mod/2), range(-self.filt_w_mod/2, self.filt_w_mod/2)))
+        self.X = torch.from_numpy(X).float().cuda() + 1
+        self.Y = torch.from_numpy(Y).float().cuda() + 1
+
+        # Rate
+        self.Fc_t = torch.nn.Parameter(torch.from_numpy(numpy.asarray(numpy.random.rand(self.num_mod_filt)*50)).float().cuda())  # learnable rate parameter
+        # Scale
+        self.Fc_f = torch.nn.Parameter(torch.from_numpy(numpy.asarray(numpy.random.rand(self.num_mod_filt)*12)).float().cuda())  # learnable scale parameter
+        
+
         self.pool1 = nn.MaxPool2d(kernel_size=(1,3))
         self.conv2   = nn.Conv2d(self.num_mod_filt, self.num_mod_filt, kernel_size=(3,3))
         self.pool2 = nn.MaxPool2d(kernel_size=(1,3))
@@ -110,14 +130,20 @@ class Net (nn.Module):
             kernels[i, :] = torch.cos(np.pi * torch.sigmoid(means_sorted[i]) * self.temp) * torch.exp(- (((self.temp)**2)/(2*(((1/(torch.sigmoid(means_sorted[i])+1e-3))*10)**2 + 1e-5))))
 
         kernels = (torch.reshape(kernels, (kernels.shape[0], 1, kernels.shape[1], 1)))
+        
+        # Updating 2-D Gaussian kernels (modulation FB) using updated Rate-Scale (2-D Means) Parameter
+        kernels_mod = torch.zeros(self.num_mod_filt, 1, self.filt_w_mod, self.filt_h_mod).cuda()
+        for i in range(self.Fc_t.shape[0]):
+            kernels_mod[i, 0, :, :] = torch.cos(2* np.pi * ((self.Fc_t[i] * self.X/self.t_fs)+ (self.Fc_f[i] * self.Y/self.f_fs))) * torch.exp(-(((self.X)/(2*self.t_sigma[i]))**2+((self.Y)/(2*self.f_sigma[i]))**2))
 
-        # input x is (B, C=1, t=101, s=400)
+        # Input x is (B, C=1, t=101, s=400)
         x = x * self.hamming_window
         x = x.permute(0,2,3,1) # B,t,s,1
         x = x.contiguous()
         batch_size = x.shape[0]
         x = torch.reshape(x, (batch_size*self.patch_length, 1, self.win_length, 1)) # Bx101,1,s=400,1
 
+        # Acoustic FB layer
         x = F.conv2d(x, kernels, padding = (self.padding, 0)) # 1-D Conv as acoustic filtering --> Bx101, f=80, s=400, 1
         x = torch.reshape(x, (batch_size, self.patch_length, self.ngf, self.len_after_conv)).permute(0,2,3,1)   # Bx101,80,400,1 --> B,101,80,400 --> B, 80, 400, 101
         x = torch.abs(x)
@@ -134,19 +160,18 @@ class Net (nn.Module):
 
         batch_size = x.shape[0]
 
-        x = x.permute(0,3,2,1)
-
-        # Pruning to (B, 1, 21, f=80)
-        x = x[:, :, self.initial_splice - self.final_splice : self.initial_splice + self.final_splice + 1, :] # Spec B, 1, (2*final_splice+1), 80
-
-        # Modulation filtering
-        x = self.sigmoid(self.conv1(x))  # B, 40, 19, 78
+        # Modulation FB layer
+        x = F.conv2d(x.permute(0,3,2,1), kernels_mod.permute(0,1,3,2), padding=(self.padding_h_mod,self.padding_w_mod))
 
         # Calling modulation filtering relevance sub-network
         filter_wts_modFB = self.relevance_filter_wts_modFB(x)
         filter_wts_modFB = filter_wts_modFB.reshape(filter_wts_modFB.shape[0], filter_wts_modFB.shape[1], 1, 1) # B, 40, 1, 1 - Modulation relevance weights
 
         x = filter_wts_modFB * x  # Multiplied the modulation FB relevance weights
+        
+        # Pruning to (B, 1, 21, f=80)
+        x = x[:, :, self.initial_splice - self.final_splice : self.initial_splice + self.final_splice + 1, :] # Spec B, 1, (2*final_splice+1), 80
+        
         x = self.bn_1(x) # Batch normalization
 
         x = self.pool1(x)  # B,40, 19, 26
