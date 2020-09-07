@@ -177,7 +177,7 @@ class Net (nn.Module):
         x = self.pool1(x)  # B,40, 19, 26
         x = self.sigmoid(self.conv2(x))  # B, 40, 17, 24
         x = self.pool2(x)  # B, 40, 17, 8
-        x = torch.reshape(x, (-1, 5440))  # 40*17*8 = 5440
+        x = torch.reshape(x, (batch_size, -1))  # 40*17*8 = 5440
         x = self.d1(x)
         x = self.sigmoid(self.fc1(x))
         x = self.sigmoid(self.fc2(x))
