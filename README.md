@@ -17,4 +17,4 @@ P. Agrawal, S. Ganapathy, "Interpretable Representation Learning for Speech and 
 
 ******************************************************************
 
-30-Aug-2020 See the file LICENSE for the licence associated with this software.
+07-Sept-2020 See the file LICENSE for the licence associated with this software.
