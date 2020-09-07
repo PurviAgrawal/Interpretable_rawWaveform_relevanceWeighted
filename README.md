@@ -7,11 +7,11 @@ The full acoustic model consisting of relevance sub-networks, convolutional laye
 
 ******************************************************************
 
-The script Net_raw_AcFB_Attn_ModFB_Attn_CNN2D_DNN_cuda.py contains the proposed network architecture. It takes the raw speech waveform in batches as input, each of size [B,1, 101, 400], for batch size B=32, t=101 raw frames and s=400 samples in each frame.
+The script Net_raw_AcFB_Attn_ModFB_Attn_CNN2D_DNN_cuda.py contains the proposed network architecture. It takes the raw speech waveform in batches as input, each of size [B, 1, 101, 400], for batch size B=32, t=101 raw frames and s=400 samples in each frame.
 
 ******************************************************************
 
-Implementation of the paper:
+Reference paper:
 
 P. Agrawal, S. Ganapathy, "Interpretable Representation Learning for Speech and Audio Signals Based on Relevance Weighting," IEEE Transactions and Audio, Speech and Language Processing, 2020.
 
